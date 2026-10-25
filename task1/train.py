@@ -14,8 +14,13 @@ the effective batch, divided by the number of those tokens. Prompts and padding 
 """
 from __future__ import annotations
 
-import argparse
 import os
+
+# Let the CUDA allocator grow segments instead of fragmenting: Full FT + L2-SP uses ~13 of the
+# T4's 14.6 GB, and fragmentation alone (1.7 GB reserved-but-unused) was enough to run out.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+import argparse
 import random
 import time
 from pathlib import Path

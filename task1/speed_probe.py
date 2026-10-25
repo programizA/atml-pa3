@@ -31,12 +31,17 @@ def main():
     a = ap.parse_args()
     root = Path(a.root)
     scratch = Path("/tmp/pa3_speed_probe")
+    old = read_json(root / "speed_probe.json") if (root / "speed_probe.json").exists() else {}
     out = {"updates": a.updates, "sec_per_update": {}, "peak_allocated_gb": {}, "notes": {}}
+    for k in ("sec_per_update", "peak_allocated_gb", "notes"):      # re-probing one method keeps the rest
+        out[k].update(old.get(k, {}))
     for m in a.methods.split(","):
         shutil.rmtree(scratch, ignore_errors=True)
         cmd = [sys.executable, "-m", "task1.train", "--method", m, "--model", a.model, "--data",
                str(root / "data"), "--out", str(scratch), "--stop_after", str(a.updates)] + a.extra.split()
         r = subprocess.run(cmd, capture_output=True, text=True)
+        out["sec_per_update"].pop(m, None)
+        out["peak_allocated_gb"].pop(m, None)
         if r.returncode != 0:
             out["notes"][m] = "FAILED: " + r.stdout[-1500:] + r.stderr[-1500:]
             print(m, "FAILED\n", r.stderr[-3000:], flush=True)

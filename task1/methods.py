@@ -86,9 +86,18 @@ def target_linears(model, targets=C.LORA_TARGETS):
 
 @torch.no_grad()
 def top_singular_bases(W: torch.Tensor, k: int):
-    """Leading k left/right singular vectors of a weight matrix, computed once in FP32."""
-    U, S, Vh = torch.linalg.svd(W.float(), full_matrices=False)
-    return U[:, :k].contiguous(), Vh[:k, :].T.contiguous(), S
+    """Leading k left/right singular vectors of a weight matrix, computed once in FP32.
+
+    On the GPU we ask for the classic (more accurate) gesvd solver, and then re-orthonormalise
+    the k kept vectors with a QR step. QR keeps exactly the same subspace, but removes the small
+    loss of orthogonality (~1e-4) that GPU SVD solvers leave, so the projection really is exact
+    to FP32 precision."""
+    Wf = W.float()
+    kw = {"driver": "gesvd"} if Wf.is_cuda else {}
+    U, S, Vh = torch.linalg.svd(Wf, full_matrices=False, **kw)
+    Uk, _ = torch.linalg.qr(U[:, :k])
+    Vk, _ = torch.linalg.qr(Vh[:k, :].T)
+    return Uk.contiguous(), Vk.contiguous(), S
 
 
 def add_adapters(model, r, alpha, dropout=C.LORA_DROPOUT, protect_k=None, seed=C.SEED, targets=C.LORA_TARGETS):
@@ -186,21 +195,33 @@ class L2SP:
         self.ref_bytes = sum(t.numel() * t.element_size() for t in self.ref.values())
 
     @torch.no_grad()
-    def omega_and_add_grad(self, add_grad=True):
-        omega = torch.zeros((), dtype=torch.float64, device=self.params[0][1].device)
+    def omega_and_add_grad(self, add_grad=True, chunk_elems=1 << 24):
+        """Omega, and (optionally) grad += lam * (theta - theta0).
+
+        Works through each tensor in slices of at most 16M numbers, so the temporary difference
+        tensor stays at <= 64 MB. (A whole-tensor FP64 copy of the 156M-entry embedding matrix
+        would need 1.2 GB, which is more than a T4 has left during Full FT.) Each slice's sum of
+        squares is FP32; slices are added up in Python floats (FP64)."""
+        omega = 0.0
         for n, p in self.params:
-            d = p.float() - self.ref[n].float()
-            omega += 0.5 * (d.double().pow(2).sum())
-            if add_grad and p.grad is not None:
-                p.grad.add_(d, alpha=self.lam)
-        return float(omega)
+            pf, rf = p.view(-1), self.ref[n].view(-1)
+            g = p.grad.view(-1) if (add_grad and p.grad is not None) else None
+            for i in range(0, pf.numel(), chunk_elems):
+                d = pf[i:i + chunk_elems].float() - rf[i:i + chunk_elems].float()
+                omega += 0.5 * float(d.pow(2).sum())
+                if g is not None:
+                    g[i:i + chunk_elems].add_(d, alpha=self.lam)
+                del d
+        return omega
 
 
 @torch.no_grad()
-def displacement(params, theta0: dict):
-    """Full-model L2 distance ||theta - theta0||_2 in FP32/FP64, over unique parameters."""
+def displacement(params, theta0: dict, chunk_elems=1 << 24):
+    """Full-model L2 distance ||theta - theta0||_2 over unique parameters (sliced, like Omega)."""
     tot = 0.0
     for n, p in params:
-        ref = theta0[n].to(p.device)
-        tot += float((p.float() - ref.float()).double().pow(2).sum())
+        pf, rf = p.view(-1), theta0[n].view(-1)
+        for i in range(0, pf.numel(), chunk_elems):
+            d = pf[i:i + chunk_elems].float() - rf[i:i + chunk_elems].to(p.device).float()
+            tot += float(d.pow(2).sum())
     return math.sqrt(tot)

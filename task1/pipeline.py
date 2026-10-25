@@ -32,6 +32,8 @@ def estimates(root):
     if sp.exists():
         for m, secs in read_json(sp).get("sec_per_update", {}).items():
             est[f"train_{m}"] = secs * C.TOTAL_UPDATES / 3600 * 1.05 + 0.05
+    if "train_full" in est:
+        est.setdefault("train_l2sp", est["train_full"] * 1.1)
     for m in C.METHODS:
         r = Path(root) / "runs" / m / "resources.json"
         if r.exists():
@@ -58,7 +60,7 @@ def build_jobs(a):
     runs, ev, qual, data = root / "runs", root / "eval", root / "qualitative", root / "data"
     est = estimates(root)
     jobs = []
-    order = ["full", "l2sp", "lora16", "oplora", "lora4"]
+    order = ["oplora", "full", "lora16", "l2sp", "lora4"]   # roughly longest first (speed probe)
     for m in order:
         jobs.append(Job(f"train_{m}",
                         f"{py} -m task1.train --method {m} --model {a.model} --data {data} --out {runs} "
