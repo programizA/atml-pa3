@@ -48,9 +48,10 @@ def estimates(root):
             t = s.get("gsm8k", {}).get("seconds", 0) + s.get("likelihood_seconds", 0) + s.get("qualitative", {}).get("seconds", 0)
             if t:
                 secs.append(t)
-    if secs:
-        for c, _, _ in C.CONDITIONS:
-            est.setdefault(f"eval_{c}", max(secs) / 3600 * 1.1 + 0.1)
+    for c, _, _ in C.CONDITIONS:
+        # unmeasured: assume ~0.9 h (GSM8K generation + 3 likelihood benchmarks + 24 responses on a T4)
+        est.setdefault(f"eval_{c}", max(secs) / 3600 * 1.1 + 0.1 if secs else 0.9)
+    est.setdefault("diagnostics", 0.25)
     return est
 
 
@@ -78,7 +79,7 @@ def build_jobs(a):
                     f"--out {root / 'diagnostics'} {a.diag_extra}",
                     done=lambda: (root / "diagnostics" / "diagnostics.json").exists()
                     and len(read_json(root / "diagnostics" / "diagnostics.json")["conditions"]) == 6,
-                    deps=[f"train_{m}" for m in order]))
+                    deps=[f"train_{m}" for m in order], est_hours=est.get("diagnostics")))
     return jobs
 
 

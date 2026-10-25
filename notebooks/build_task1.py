@@ -188,7 +188,7 @@ Each job's log is in `results/task1/logs/`. Jobs whose outputs already exist are
 code('''
 from task1.pipeline import main as run_pipeline
 elapsed_h = (time.time() - NOTEBOOK_START) / 3600
-budget = None if TEST else max(0.5, 11.4 - elapsed_h)      # leave time to save outputs
+budget = None if TEST else max(0.5, 11.2 - elapsed_h)      # leave time to analyse and save outputs
 argv = ["pipeline", "--root", ROOT, "--model", MODEL, "--gpus", str(max(1, N_GPUS)),
         "--train_extra", TRAIN_EXTRA, "--eval_extra", EVAL_EXTRA, "--diag_extra", DIAG_EXTRA]
 if budget: argv += ["--deadline_hours", f"{budget:.2f}"]
