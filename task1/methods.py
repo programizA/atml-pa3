@@ -91,13 +91,13 @@ def top_singular_bases(W: torch.Tensor, k: int):
     return U[:, :k].contiguous(), Vh[:k, :].T.contiguous(), S
 
 
-def add_adapters(model, r, alpha, dropout=C.LORA_DROPOUT, protect_k=None, seed=C.SEED):
+def add_adapters(model, r, alpha, dropout=C.LORA_DROPOUT, protect_k=None, seed=C.SEED, targets=C.LORA_TARGETS):
     """Freeze the model and wrap every target linear with LoRALinear. With protect_k set, compute
     the OPLoRA bases from each starting weight. Returns overhead measurements."""
     for p in model.parameters():
         p.requires_grad_(False)
     stats = {"basis_seconds": 0.0, "basis_bytes": 0, "n_modules": 0}
-    for idx, (name, parent, attr, lin) in enumerate(target_linears(model)):
+    for idx, (name, parent, attr, lin) in enumerate(target_linears(model, targets)):
         Uk = Vk = None
         if protect_k:
             t0 = time.perf_counter()
