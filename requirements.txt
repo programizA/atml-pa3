@@ -1,0 +1,14 @@
+# Tested with Python 3.10-3.13 and the PyTorch preinstalled on Kaggle GPU images (2.x, CUDA 12).
+transformers==4.57.6
+accelerate>=1.0
+lm-eval==0.4.13
+datasets>=3.6,<4.0        # 3.x still loads the few script-based benchmark datasets
+safetensors
+pyyaml
+pandas
+matplotlib
+numpy
+pyarrow
+math-verify[antlr4_13_2]==0.9.0
+gdown
+pillow
