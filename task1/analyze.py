@@ -345,6 +345,11 @@ def main():
     regularization_table(logs, root / "runs", out)
     resources_table(root / "runs", root / "eval", out)
     fig_diagnostics(root / "diagnostics", out)
+    from task1.gsm8k_audit import audit
+    au = audit(root / "eval", out)
+    if not au.empty:
+        print(au[["label", "flexible", "answer_aware", "format_gap_pp", "flex_read_$$", "uses_boxed", "uses_answer_is"]]
+              .round(4).to_string())
     if not df.empty:
         print(df[["label"] + [b for b, _, _ in BENCH_ORDER] + [f"{b}_dpp" for b, _, _ in BENCH_ORDER]].round(4).to_string())
     print("wrote", sorted(p.name for p in out.iterdir()))

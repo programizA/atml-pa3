@@ -122,32 +122,36 @@ def fig_types(out):
 
 
 def select_examples(run, n_per=1):
-    """Stated rule: for each suite and question type, take pairs in pair-ID order and keep the first
-    pair (a) answered correctly on both sides with the correct images, (b) given the same answer on
-    both images (a prior-driven answer), and (c) whose complementary-swap answer copies the
-    partner's answer on at least one side. Never chosen by looking at anything but these flags."""
+    """Stated rule. Walk each (suite, question type) in pair-ID order.
+    (a) Grounded success: the first pair answered correctly on both sides with the correct images
+        AND, under the complementary swap, answered with the partner's answer on both sides.
+    (b) Prior-driven failure (VQAv2 only): the first pair given the same answer on both images.
+    Pairs are chosen from these flags alone and each pair appears at most once."""
     rows = pd.DataFrame(read_jsonl(Path(run) / "test_predictions.jsonl"))
-    picks = []
+    picks, used = [], set()
     for (suite, qtype), sub in rows.groupby(["suite", "qtype"], sort=False):
         cor = sub[sub.condition == "correct"]
         comp = sub[sub.condition == "complementary"]
-        pids = list(dict.fromkeys(cor.pair_id))
-        pids.sort(key=lambda p: int(p.split(":")[1]))
-        got = {"both_correct": 0, "same_answer": 0, "follows_partner": 0}
-        for pid in pids:
-            c = cor[cor.pair_id == pid].sort_values("side")
-            k = comp[comp.pair_id == pid].sort_values("side")
-            flags = {"both_correct": (c.pred_norm.values == c.canon.values).all(),
-                     "same_answer": c.pred_norm.iloc[0] == c.pred_norm.iloc[1],
-                     "follows_partner": bool((k.follows_partner > 0).any())}
-            for f, ok in flags.items():
-                if ok and got[f] < n_per:
-                    got[f] += 1
-                    picks.append({"suite": suite, "qtype": qtype, "reason": f, "pair_id": pid})
+        pids = sorted(dict.fromkeys(cor.pair_id), key=lambda p: int(p.split(":")[1]))
+        rules = [("grounded_success", lambda c, k: (c.pred_norm.values == c.canon.values).all()
+                  and (k.follows_partner > 0).all())]
+        if suite == "vqa":
+            rules.append(("same_answer_both_images", lambda c, k: c.pred_norm.iloc[0] == c.pred_norm.iloc[1]))
+        for reason, test in rules:
+            got = 0
+            for pid in pids:
+                if pid in used or got >= n_per:
+                    continue
+                c = cor[cor.pair_id == pid].sort_values("side")
+                k = comp[comp.pair_id == pid].sort_values("side")
+                if test(c, k):
+                    picks.append({"suite": suite, "qtype": qtype, "reason": reason, "pair_id": pid})
+                    used.add(pid)
+                    got += 1
     return picks
 
 
-def fig_examples(run, out, images_root, picks, max_rows=6):
+def fig_examples(run, out, images_root, picks, max_rows=8):
     import matplotlib.pyplot as plt
     from PIL import Image
 
@@ -210,6 +214,32 @@ def resources(root, run, out):
     return res
 
 
+def label_audit_summary(root, run, out):
+    """If label_audit.csv has been filled in, re-score the annotation-derived suite on images whose
+    generated label was judged sound (doubtful != y), to show how much label noise moves the numbers."""
+    f = Path(root) / "data" / "label_audit.csv"
+    p = Path(run) / "test_predictions.jsonl"
+    if not f.exists() or not p.exists():
+        return None
+    au = pd.read_csv(f, dtype=str)
+    au["doubtful"] = au["doubtful(y/n)"].astype(str).str.strip().str.lower().eq("y")
+    if not au["doubtful(y/n)"].notna().any():
+        return None
+    bad = set(zip(au[au.doubtful].pair_id, au[au.doubtful].side))
+    rows = pd.DataFrame(read_jsonl(p))
+    g = rows[rows.suite == "ground"].copy()
+    g["clean"] = [(pid, s) not in bad for pid, s in zip(g.pair_id, g.side)]
+    res = {"n_doubtful_images": len(bad), "by_kind": {}}
+    for kind in ("presence", "counting"):
+        k = g[g.qtype == kind]
+        res["n_doubtful_by_kind"] = res.get("n_doubtful_by_kind", {}) | {kind: int((~k[k.condition == "correct"].clean).sum())}
+        res["by_kind"][kind] = {c: {"all": float(k[k.condition == c].score.mean()),
+                                    "clean_only": float(k[(k.condition == c) & k.clean].score.mean())}
+                                for c in C.CONDITIONS}
+    write_json(Path(out) / "label_audit_summary.json", res)
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default="results/task2")
@@ -226,6 +256,7 @@ def main():
         picks = select_examples(run)
         write_json(out / "example_picks.json", picks)
         fig_examples(run, out, a.images, picks)
+    print(label_audit_summary(a.root, run, out))
     print(resources(a.root, run, out))
     if df is not None:
         print(df.round(3).to_string())
