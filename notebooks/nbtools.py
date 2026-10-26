@@ -52,9 +52,15 @@ os.makedirs(ROOT, exist_ok=True)
 
 # Resume support: attach an earlier version of this notebook (its Output) as an input dataset and
 # everything it finished is copied back here, so finished jobs are skipped.
-for prev in glob.glob(f"/kaggle/input/*/results/{task}") + glob.glob(f"/kaggle/input/*/*/results/{task}"):
+# (Kaggle mounts another notebook's output a few folders deep, e.g.
+#  /kaggle/input/notebooks/<user>/<notebook>/results/{task}, so search at any depth.)
+found = sorted(set(glob.glob(f"/kaggle/input/**/results/{task}", recursive=True)))
+for prev in found:
     print("restoring finished work from", prev)
     shutil.copytree(prev, ROOT, dirs_exist_ok=True)
+if not found and os.path.isdir("/kaggle/input"):
+    print("no earlier results/{task} found among the inputs; inputs present:",
+          [p for p in glob.glob("/kaggle/input/**", recursive=True) if p.count("/") <= 6][:30])
 
 def sh(cmd):
     """Run a shell command from the repo, streaming its output; stop the notebook if it fails."""
